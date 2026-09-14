@@ -39,8 +39,7 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/wanderlust_key
           chmod 600 ~/.ssh/wanderlust_key
-
-          ssh-keyscan -H "${{ secrets.FE_PUBLIC_IP }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "$FE_PUBLIC_IP" >> ~/.ssh/known_hosts
 
       - name: Copy Compose to Backend EC2
         env:
@@ -48,7 +47,7 @@ jobs:
         run: |
           scp \
             -i ~/.ssh/wanderlust_key \
-            -o StrictHostKeyChecking=yes \
+            -o StrictHostKeyChecking=accept-new \
             -o ProxyJump=ubuntu@$FE_PUBLIC_IP \
             compose.yaml \
             ubuntu@10.0.16.162:~/wanderlust/backend/compose.yaml
@@ -60,46 +59,35 @@ jobs:
         run: |
           ssh \
             -i ~/.ssh/wanderlust_key \
-            -o StrictHostKeyChecking=yes \
+            -o StrictHostKeyChecking=accept-new \
             -o ProxyJump=ubuntu@$FE_PUBLIC_IP \
             ubuntu@10.0.16.162 << EOF
 
             set -e
-
             cd ~/wanderlust/backend
-
-            echo "Logging into ECR..."
 
             aws ecr get-login-password --region ap-south-1 | \
               docker login --username AWS --password-stdin $ECR_REGISTRY
 
             export ECR_REGISTRY=$ECR_REGISTRY
 
-            echo "Pulling latest backend image..."
             docker compose pull
-
-            echo "Restarting backend..."
             docker compose down
             docker compose up -d
 
-            echo "Deployment completed."
-
             docker ps
-
           EOF
 
       - name: Verify Backend API
         run: |
           for i in {1..10}; do
             echo "Attempt $i..."
-
             if curl -sf -o /dev/null \
               -w 'HTTP Status: %{http_code}\n' \
               https://wanderlust01.duckdns.org/api/posts; then
               echo "Backend API verification successful."
               exit 0
             fi
-
             sleep 5
           done
 
