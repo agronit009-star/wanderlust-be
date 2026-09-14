@@ -10,8 +10,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout code
         uses: actions/checkout@v4
+
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -20,16 +22,23 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-south-1
 
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+
 
       - name: Build and Push Backend Image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          docker build -t $ECR_REGISTRY/wanderlust-backend:latest .
-          docker push $ECR_REGISTRY/wanderlust-backend:latest
+          docker build \
+            -t $ECR_REGISTRY/wanderlust-backend:latest \
+            .
+
+          docker push \
+            $ECR_REGISTRY/wanderlust-backend:latest
+
 
       - name: Prepare SSH
         env:
@@ -39,12 +48,20 @@ jobs:
           mkdir -p ~/.ssh
 
           printf '%s\n' "$SSH_KEY" > ~/.ssh/wanderlust_key
+
           chmod 600 ~/.ssh/wanderlust_key
 
-          echo "Checking SSH private key..."
-          ssh-keygen -y -f ~/.ssh/wanderlust_key > /dev/null
+          echo "Checking SSH key..."
 
-          echo "Testing SSH to Frontend..."
+          ssh-keygen \
+            -y \
+            -f ~/.ssh/wanderlust_key \
+            > /dev/null
+
+          echo "SSH key is valid."
+
+          echo "Testing Frontend SSH..."
+
           ssh \
             -i ~/.ssh/wanderlust_key \
             -o StrictHostKeyChecking=accept-new \
@@ -52,7 +69,8 @@ jobs:
             ubuntu@$FE_PUBLIC_IP \
             "echo FRONTEND_SSH_OK"
 
-      - name: Test ProxyJump to Backend
+
+      - name: Test Backend SSH through Frontend
         env:
           FE_PUBLIC_IP: ${{ secrets.FE_PUBLIC_IP }}
         run: |
@@ -60,11 +78,12 @@ jobs:
 
           ssh \
             -i ~/.ssh/wanderlust_key \
+            -o "ProxyCommand=ssh -i ~/.ssh/wanderlust_key -o StrictHostKeyChecking=accept-new -W %h:%p ubuntu@$FE_PUBLIC_IP" \
             -o StrictHostKeyChecking=accept-new \
             -o ConnectTimeout=10 \
-            -o ProxyJump=ubuntu@$FE_PUBLIC_IP \
             ubuntu@10.0.16.162 \
             "echo BACKEND_SSH_OK"
+
 
       - name: Copy Compose to Backend EC2
         env:
@@ -74,36 +93,45 @@ jobs:
 
           scp \
             -i ~/.ssh/wanderlust_key \
+            -o "ProxyCommand=ssh -i ~/.ssh/wanderlust_key -o StrictHostKeyChecking=accept-new -W %h:%p ubuntu@$FE_PUBLIC_IP" \
             -o StrictHostKeyChecking=accept-new \
             -o ConnectTimeout=10 \
-            -o ProxyJump=ubuntu@$FE_PUBLIC_IP \
             compose.yaml \
             ubuntu@10.0.16.162:~/wanderlust/backend/compose.yaml
 
           echo "COMPOSE_COPY_OK"
+
 
       - name: Deploy Backend
         env:
           FE_PUBLIC_IP: ${{ secrets.FE_PUBLIC_IP }}
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
+          echo "Connecting to Backend..."
+
           ssh \
             -i ~/.ssh/wanderlust_key \
+            -o "ProxyCommand=ssh -i ~/.ssh/wanderlust_key -o StrictHostKeyChecking=accept-new -W %h:%p ubuntu@$FE_PUBLIC_IP" \
             -o StrictHostKeyChecking=accept-new \
             -o ConnectTimeout=10 \
-            -o ProxyJump=ubuntu@$FE_PUBLIC_IP \
             ubuntu@10.0.16.162 << EOF
 
             set -e
 
+            echo "Connected to Backend EC2."
+
             cd ~/wanderlust/backend
 
-            echo "Logging into ECR..."
+            echo "Logging into Amazon ECR..."
 
-            aws ecr get-login-password --region ap-south-1 | \
+            aws ecr get-login-password \
+              --region ap-south-1 | \
               docker login \
               --username AWS \
-              --password-stdin $ECR_REGISTRY
+              --password-stdin \
+              $ECR_REGISTRY
+
+            echo "ECR login successful."
 
             export ECR_REGISTRY=$ECR_REGISTRY
 
@@ -111,38 +139,47 @@ jobs:
 
             docker compose pull
 
-            echo "Stopping old backend..."
+            echo "Stopping old backend container..."
 
             docker compose down
 
-            echo "Starting new backend..."
+            echo "Starting new backend container..."
 
             docker compose up -d
 
-            echo "Backend containers:"
+            echo "Backend deployment completed."
+
+            echo "Running containers:"
 
             docker ps
 
           EOF
 
+
       - name: Verify Backend API
         run: |
-          echo "Verifying backend API..."
+          echo "Verifying Backend API..."
 
           for i in {1..10}; do
+
             echo "Attempt $i..."
 
             if curl -sf \
               -o /dev/null \
               -w 'HTTP Status: %{http_code}\n' \
-              https://wanderlust01.duckdns.org/api/posts; then
+              https://wanderlust01.duckdns.org/api/posts
+            then
 
               echo "BACKEND_API_OK"
+
               exit 0
+
             fi
 
             sleep 5
+
           done
 
           echo "Backend API verification failed."
+
           exit 1
