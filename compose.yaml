@@ -1,0 +1,9 @@
+services:
+  backend:
+    build: .
+    container_name: wanderlust-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "5000:5000"
